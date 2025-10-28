@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
 	"golang.org/x/net/html"
 )
 
@@ -20,9 +21,9 @@ const (
 )
 
 var (
-	telegramBotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
-	telegramChatID   = os.Getenv("TELEGRAM_CHAT_ID")
-	discordWebhook   = os.Getenv("DISCORD_WEBHOOK_URL")
+	telegramBotToken string
+	telegramChatID   string
+	discordWebhook   string
 )
 
 type Announcement struct {
@@ -32,6 +33,16 @@ type Announcement struct {
 }
 
 func main() {
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		fmt.Println("⚠️  No .env file found, using environment variables")
+	}
+
+	// Load environment variables
+	telegramBotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
+	telegramChatID = os.Getenv("TELEGRAM_CHAT_ID")
+	discordWebhook = os.Getenv("DISCORD_WEBHOOK_URL")
+
 	fmt.Println("🚀 NCU CSIE Announcement Monitor Started")
 	fmt.Printf("📍 Monitoring: %s\n", announcementURL)
 	fmt.Printf("⏱️  Check interval: %v\n", checkInterval)
@@ -39,9 +50,13 @@ func main() {
 	// Check notification settings
 	if telegramBotToken != "" && telegramChatID != "" {
 		fmt.Println("✓ Telegram notifications enabled")
+	} else {
+		fmt.Println("✗ Telegram notifications disabled (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)")
 	}
 	if discordWebhook != "" {
 		fmt.Println("✓ Discord notifications enabled")
+	} else {
+		fmt.Println("✗ Discord notifications disabled (set DISCORD_WEBHOOK_URL)")
 	}
 
 	fmt.Println(strings.Repeat("-", 70))

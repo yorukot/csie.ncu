@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,9 +14,15 @@ import (
 )
 
 const (
-	url           = "https://www.csie.ncu.edu.tw/announcement/category/%E6%8B%9B%E7%94%9F%E5%BF%AB%E8%A8%8A"
-	checkInterval = 1 * time.Minute
-	stateFile     = "last_announcements.json"
+	announcementURL = "https://www.csie.ncu.edu.tw/announcement/category/%E6%8B%9B%E7%94%9F%E5%BF%AB%E8%A8%8A"
+	checkInterval   = 1 * time.Minute
+	stateFile       = "last_announcements.json"
+)
+
+var (
+	telegramBotToken = os.Getenv("TELEGRAM_BOT_TOKEN")
+	telegramChatID   = os.Getenv("TELEGRAM_CHAT_ID")
+	discordWebhook   = os.Getenv("DISCORD_WEBHOOK_URL")
 )
 
 type Announcement struct {
@@ -26,8 +33,17 @@ type Announcement struct {
 
 func main() {
 	fmt.Println("🚀 NCU CSIE Announcement Monitor Started")
-	fmt.Printf("📍 Monitoring: %s\n", url)
+	fmt.Printf("📍 Monitoring: %s\n", announcementURL)
 	fmt.Printf("⏱️  Check interval: %v\n", checkInterval)
+
+	// Check notification settings
+	if telegramBotToken != "" && telegramChatID != "" {
+		fmt.Println("✓ Telegram notifications enabled")
+	}
+	if discordWebhook != "" {
+		fmt.Println("✓ Discord notifications enabled")
+	}
+
 	fmt.Println(strings.Repeat("-", 70))
 
 	for {
@@ -36,12 +52,88 @@ func main() {
 	}
 }
 
+func sendTelegramNotification(announcement Announcement) error {
+	if telegramBotToken == "" || telegramChatID == "" {
+		return nil // Skip if not configured
+	}
+
+	message := fmt.Sprintf("🔔 *NCU CSIE 新公告*\n\n📢 %s\n\n🔗 %s", announcement.Title, announcement.URL)
+
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", telegramBotToken)
+
+	payload := map[string]interface{}{
+		"chat_id":    telegramChatID,
+		"text":       message,
+		"parse_mode": "Markdown",
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal telegram payload: %w", err)
+	}
+
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send telegram message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func sendDiscordNotification(announcement Announcement) error {
+	if discordWebhook == "" {
+		return nil // Skip if not configured
+	}
+
+	payload := map[string]interface{}{
+		"embeds": []map[string]interface{}{
+			{
+				"title":       "🔔 NCU CSIE 新公告",
+				"description": announcement.Title,
+				"url":         announcement.URL,
+				"color":       3447003, // Blue color
+				"fields": []map[string]interface{}{
+					{
+						"name":  "連結",
+						"value": fmt.Sprintf("[點擊查看](%s)", announcement.URL),
+					},
+				},
+				"timestamp": time.Now().Format(time.RFC3339),
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal discord payload: %w", err)
+	}
+
+	resp, err := http.Post(discordWebhook, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to send discord message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("discord webhook error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 func fetchAnnouncements() ([]Announcement, error) {
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
 
-	resp, err := client.Get(url)
+	resp, err := client.Get(announcementURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch page: %w", err)
 	}
@@ -192,6 +284,19 @@ func checkForNewAnnouncements() {
 		for _, a := range newAnnouncements {
 			fmt.Printf("\n📢 %s\n", a.Title)
 			fmt.Printf("   🔗 %s\n", a.URL)
+
+			// Send notifications
+			if err := sendTelegramNotification(a); err != nil {
+				fmt.Printf("⚠️  Warning: Failed to send Telegram notification: %v\n", err)
+			} else if telegramBotToken != "" && telegramChatID != "" {
+				fmt.Println("   ✓ Telegram notification sent")
+			}
+
+			if err := sendDiscordNotification(a); err != nil {
+				fmt.Printf("⚠️  Warning: Failed to send Discord notification: %v\n", err)
+			} else if discordWebhook != "" {
+				fmt.Println("   ✓ Discord notification sent")
+			}
 		}
 		fmt.Println("\n" + strings.Repeat("=", 70))
 

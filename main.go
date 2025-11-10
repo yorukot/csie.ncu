@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	announcementURL = "https://www.csie.ncu.edu.tw/announcement/category/%E6%8B%9B%E7%94%9F%E5%BF%AB%E8%A8%8A"
+	announcementURL = "https://www.csie.ntnu.edu.tw/index.php/category/news/announcement/"
 	checkInterval   = 1 * time.Minute
 	stateFile       = "last_announcements.json"
 )
@@ -43,7 +43,7 @@ func main() {
 	telegramChatID = os.Getenv("TELEGRAM_CHAT_ID")
 	discordWebhook = os.Getenv("DISCORD_WEBHOOK_URL")
 
-	fmt.Println("🚀 NCU CSIE Announcement Monitor Started")
+	fmt.Println("🚀 NTNU CSIE Announcement Monitor Started")
 	fmt.Printf("📍 Monitoring: %s\n", announcementURL)
 	fmt.Printf("⏱️  Check interval: %v\n", checkInterval)
 
@@ -72,7 +72,7 @@ func sendTelegramNotification(announcement Announcement) error {
 		return nil // Skip if not configured
 	}
 
-	message := fmt.Sprintf("🔔 *NCU CSIE 新公告*\n\n📢 %s\n\n🔗 %s", announcement.Title, announcement.URL)
+	message := fmt.Sprintf("🔔 *NTNU CSIE 新公告*\n\n📢 %s\n\n🔗 %s", announcement.Title, announcement.URL)
 
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", telegramBotToken)
 
@@ -109,7 +109,7 @@ func sendDiscordNotification(announcement Announcement) error {
 	payload := map[string]interface{}{
 		"embeds": []map[string]interface{}{
 			{
-				"title":       "🔔 NCU CSIE 新公告",
+				"title":       "🔔 NTNU CSIE 新公告",
 				"description": announcement.Title,
 				"url":         announcement.URL,
 				"color":       3447003, // Blue color
@@ -174,35 +174,57 @@ func fetchAnnouncements() ([]Announcement, error) {
 
 func extractAnnouncements(n *html.Node) []Announcement {
 	var announcements []Announcement
-	var traverse func(*html.Node)
+	var traverse func(*html.Node, bool)
 
-	traverse = func(node *html.Node) {
-		if node.Type == html.ElementNode && node.Data == "a" {
+	traverse = func(node *html.Node, inArticle bool) {
+		// Check if this is an article tag with blog-entry class
+		if node.Type == html.ElementNode && node.Data == "article" {
+			hasClass := false
 			for _, attr := range node.Attr {
-				if attr.Key == "href" && strings.Contains(attr.Val, "/announcement/") {
-					// Get the text content of the link
-					title := getTextContent(node)
-					if title != "" && !strings.Contains(title, "上一頁") && !strings.Contains(title, "下一頁") {
-						fullURL := attr.Val
-						if !strings.HasPrefix(fullURL, "http") {
-							fullURL = "https://www.csie.ncu.edu.tw" + fullURL
-						}
+				if attr.Key == "class" && strings.Contains(attr.Val, "blog-entry") {
+					hasClass = true
+					break
+				}
+			}
+			if hasClass {
+				inArticle = true
+			}
+		}
 
-						// Avoid duplicates
-						isDuplicate := false
-						for _, a := range announcements {
-							if a.URL == fullURL {
-								isDuplicate = true
-								break
+		// Look for links within article tags
+		if node.Type == html.ElementNode && node.Data == "a" && inArticle {
+			for _, attr := range node.Attr {
+				if attr.Key == "href" {
+					// NTNU uses date-based permalinks: /index.php/YYYY/MM/DD/slug/
+					// Filter to only include post permalinks, exclude category/page links
+					if strings.Contains(attr.Val, "/index.php/") &&
+						!strings.Contains(attr.Val, "/category/") &&
+						!strings.Contains(attr.Val, "/page/") {
+
+						// Get the text content of the link
+						title := getTextContent(node)
+						if title != "" && !strings.Contains(title, "上一頁") && !strings.Contains(title, "下一頁") && !strings.Contains(title, "Next") && !strings.Contains(title, "Previous") {
+							fullURL := attr.Val
+							if !strings.HasPrefix(fullURL, "http") {
+								fullURL = "https://www.csie.ntnu.edu.tw" + fullURL
 							}
-						}
 
-						if !isDuplicate && len(announcements) < 5 {
-							announcements = append(announcements, Announcement{
-								Title:     strings.TrimSpace(title),
-								URL:       fullURL,
-								Timestamp: time.Now().Format(time.RFC3339),
-							})
+							// Avoid duplicates
+							isDuplicate := false
+							for _, a := range announcements {
+								if a.URL == fullURL {
+									isDuplicate = true
+									break
+								}
+							}
+
+							if !isDuplicate && len(announcements) < 5 {
+								announcements = append(announcements, Announcement{
+									Title:     strings.TrimSpace(title),
+									URL:       fullURL,
+									Timestamp: time.Now().Format(time.RFC3339),
+								})
+							}
 						}
 					}
 				}
@@ -210,11 +232,11 @@ func extractAnnouncements(n *html.Node) []Announcement {
 		}
 
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			traverse(child)
+			traverse(child, inArticle)
 		}
 	}
 
-	traverse(n)
+	traverse(n, false)
 	return announcements
 }
 
